@@ -10,6 +10,7 @@ library( shiny )
 library( shinyWidgets )
 library( ggthemes )
 library( ggiraph )
+library( gtools )
 
 CAPMETRO_RIDERSHIP_URL <- "https://www.capmetro.org/uploadedFiles/New2016/About_Capital_Metro/Dashboards/BI_ADA/Ridership%20Accessibility%20Data.xlsx"
 DAYCOUNT               <- 365 / 12 / 7
@@ -52,7 +53,7 @@ shinyApp(
     # Create widgets to select routes to display
     routePickerInput <- function(service, routes) {
       pickerInput(paste0("routes.", service), paste0(service, " Routes:"), 
-                  choices  = routes,
+                  choices  = mixedsort(routes),
                   selected = routes,
                   multiple = TRUE,
                   options  = list(`actions-box` = TRUE))
