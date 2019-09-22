@@ -131,6 +131,8 @@ shinyApp(
           scale_y_continuous(labels = scales::comma) + 
           scale_x_continuous(breaks = 1:12, labels = function(x) month.abb[x]) +
           theme_fivethirtyeight() +
+          theme(panel.grid.major.x = element_blank()) +
+          scale_color_tableau() +
           labs( caption = "Powered by Austin on Your Feet, with data from CapMetro. http://austinonyourfeet.com") +
           ggtitle("Cap Metro Ridership (selected routes)")
         girafe(ggobj = plot)
