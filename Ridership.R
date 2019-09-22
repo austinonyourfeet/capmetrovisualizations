@@ -111,8 +111,10 @@ shinyApp(
         summarize( Totals = sum(as.integer(SUM_RIDERSHIP_AVERAGE))) %>%
         pivot_wider(id_cols = c(Month, Year, Month_year), names_from = DAY_TYPE, values_from = Totals)   %>%
         inner_join( day_count, by = "Month_year" ) %>%
-        mutate( Blended.ridership = DAYCOUNT  * Saturday * wts$Sat + DAYCOUNT * Sunday * wts$Sun + 5 * DAYCOUNT * Weekday * wts$Wd,
-                Actual.ridership  = Saturdays * Saturday * wts$Sat + Sundays  * Sunday * wts$Sun +     Weekdays * Weekday * wts$Wd,
+        mutate( Blended.ridership = Saturday * DAYCOUNT / Saturdays * wts$Sat + 
+                                    Sunday   * DAYCOUNT / Sundays   * wts$Sun + 
+                                5 * Weekday  * DAYCOUNT / Weekdays  * wts$Wd,
+                Actual.ridership  = Saturday * wts$Sat + Sunday * wts$Sun + Weekday * wts$Wd,
                 Normalize = isTRUE(input$normalize), 
                 Ridership = if_else(Normalize, as.integer(round(Blended.ridership)), Actual.ridership)) %>%
         ungroup() %>% 
