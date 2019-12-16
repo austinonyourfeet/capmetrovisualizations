@@ -2,14 +2,14 @@ library( ggplot2 )
 library( dplyr )
 library( magrittr )
 library( shiny )
-library( readxl )
+library( shinyWidgets )
 library( lubridate )
 library( tidyr )
-library( chron )
-library( shiny )
-library( shinyWidgets )
 library( ggthemes )
 library( ggiraph )
+library( readxl)
+library( chron)
+library( zoo )
 library( gtools )
 
 CAPMETRO_RIDERSHIP_URL <- "https://www.capmetro.org/uploadedFiles/New2016/About_Capital_Metro/Dashboards/BI_ADA/Ridership%20Accessibility%20Data.xlsx"
@@ -75,8 +75,13 @@ shinyApp(
     fluidPage( title = "Cap Metro Ridership Visualizer", 
     sidebarLayout(
       do.call( sidebarPanel, inputs ),
-      mainPanel(girafeOutput("plot", width="100%", height = "750px"),
-                bookmarkButton())
+      mainPanel(
+        tabsetPanel(
+          tabPanel( "Ridership",           girafeOutput("plot",        width="100%", height = "750px"), bookmarkButton()),
+          tabPanel( "Change in ridership", girafeOutput("changePlot",  width="100%", height = "750px")),
+          tabPanel( "12-month average",    girafeOutput("rollingPlot", width="100%", height = "750px"))
+        )
+      )
     ))
   },
 
@@ -118,10 +123,20 @@ shinyApp(
                 Normalize = isTRUE(input$normalize), 
                 Ridership = if_else(Normalize, as.integer(round(Blended.ridership)), Actual.ridership)) %>%
         ungroup() %>% 
-        select( -Month_year ) %>%
+        group_by( Month ) %>%
+        arrange( Year) %>%
+        mutate( Year_over_year   = Ridership / lag( Ridership) - 1) %>%
+        ungroup() %>%
         arrange( Year, Month ) %>%
-        mutate( Year = as.factor(Year),
-                Tooltip = paste("Ridership:", scales::comma(Ridership)))
+        mutate( Year            = as.factor(Year),
+                Moving_average  = rollsumr( Ridership, 12, fill = NA),
+                Tooltip         = paste("Ridership:", scales::comma(Ridership)),
+                Change.tooltip  = paste(month( Month, label = TRUE), Year, "Change:", scales::percent( Year_over_year)),
+                Rolling.tooltip = paste(month( Month, label = TRUE), Year, "Trailing average:", scales::comma( Moving_average)),
+                "Cap Remap"     = case_when(
+                  Month_year < "2018-06-01" ~ "Before",
+                  Month_year >= "2018-06-01" ~ "After"),
+                "Cap Remap"     = factor( `Cap Remap`, levels = c("Before", "After")))
     })
 
     output$plot = renderGirafe({
@@ -135,8 +150,38 @@ shinyApp(
           scale_color_tableau() +
           labs( caption = "Powered by Austin on Your Feet, with data from CapMetro. http://austinonyourfeet.com") +
           ggtitle("Cap Metro Ridership (selected routes)")
-        girafe(ggobj = plot)
+        girafe(ggobj = plot, width_svg = 10, height_svg = 8)
     })
-  },
-  enableBookmarking = "url"
+    
+    output$changePlot = renderGirafe({
+        separated <- aggregated() %>%
+          filter(! is.na( Year_over_year ))
+        plot <- ggplot(separated, aes( x = Month_year, y = Year_over_year, color = `Cap Remap`, group = `Cap Remap`)) +
+          geom_line() +
+          geom_point_interactive(aes(tooltip = Change.tooltip), size = 1) +
+          geom_smooth(method = "lm", se = FALSE) +
+          scale_y_continuous(labels = scales::percent) +
+          theme_fivethirtyeight() +
+          theme(panel.grid.major.x = element_blank()) +
+          scale_color_tableau() +
+          labs( caption = "Powered by Austin on Your Feet, with data from CapMetro. http://austinonyourfeet.com") +
+          ggtitle("Year-over-year Ridership Change (selected routes)")
+        girafe(ggobj = plot, width_svg = 10, height_svg = 8)
+    })
+
+    output$rollingPlot = renderGirafe({
+      separated <- aggregated() %>%
+        filter(! is.na( Moving_average ))
+      plot <- ggplot(separated, aes( x = Month_year, y = Moving_average, color = `Cap Remap`, group = `Cap Remap`)) +
+        geom_line() +
+        geom_point_interactive(aes(tooltip = Rolling.tooltip), size = 1) +
+        scale_y_continuous(labels = scales::comma) +
+        theme_fivethirtyeight() +
+        theme(panel.grid.major.x = element_blank()) +
+        scale_color_tableau() +
+        labs( caption = "Powered by Austin on Your Feet, with data from CapMetro. http://austinonyourfeet.com") +
+        ggtitle("Trailing 12-month Ridership (selected routes)")
+      girafe(ggobj = plot, width_svg = 10, height_svg = 8)
+    })
+  }, enableBookmarking = "url"
 )
