@@ -1,3 +1,4 @@
+library( httr )
 library( ggplot2 )
 library( dplyr )
 library( magrittr )
@@ -7,21 +8,21 @@ library( lubridate )
 library( tidyr )
 library( ggthemes )
 library( ggiraph )
-library( readxl)
 library( chron)
 library( zoo )
 library( gtools )
 
-CAPMETRO_RIDERSHIP_URL <- "https://www.capmetro.org/uploadedFiles/New2016/About_Capital_Metro/Dashboards/BI_ADA/Ridership%20Accessibility%20Data.xlsx"
+CAPMETRO_APP_URL       <- "https://app.capmetro.org/ADAReports/Report/RidershipReports"
+CAPMETRO_RIDERSHIP_URL <- "https://app.capmetro.org/ADAReports/Report/ExportRidershipReport"
 DAYCOUNT               <- 365 / 12 / 7
 WEEKDAY_OPTIONS        <- c("Weekday", "Saturday", "Sunday")
 
-# Create Ridership dataframe.
-tmp <- tempfile()
-download.file( CAPMETRO_RIDERSHIP_URL, tmp)
-ridership <- read_xlsx(tmp, skip = 1) %>%
-  separate(ROUTE_NAME, sep = "-", c("Route.number", NA), remove = FALSE, extra = "merge") %>%
-  mutate( Month_year = mdy(MONTH_YEAR),
+# Initialize connection to app, which sets cookies necessary for the next step.
+GET( CAPMETRO_APP_URL )
+ridership <- GET( CAPMETRO_RIDERSHIP_URL) %>% 
+  content() %>%
+  separate(`ROUTE NAME`, sep = "-", c("Route.number", NA), remove = FALSE, extra = "merge") %>%
+  mutate( Month_year = mdy(`MONTH YEAR`),
           Month      = month( Month_year ),
           Year       = year( Month_year),
           Route.number = as.integer( Route.number ),
@@ -60,7 +61,7 @@ shinyApp(
     }
     
     pickers <- lapply( group_split( ridership, Service), function( service_block ) {
-      routePickerInput( unique(service_block$Service), unique(service_block$ROUTE_NAME))
+      routePickerInput( unique(service_block$Service), unique(service_block[["ROUTE NAME"]]))
     })
     
     inputs <- c(pickers, list(
@@ -111,10 +112,10 @@ shinyApp(
     aggregated <- reactive({
       wts <- weekday_weights()
       ridership %>%
-        filter( ROUTE_NAME %in% selectedRoutes()) %>%
-        group_by( Month, Year, Month_year, DAY_TYPE) %>%
-        summarize( Totals = sum(as.integer(SUM_RIDERSHIP_AVERAGE))) %>%
-        pivot_wider(id_cols = c(Month, Year, Month_year), names_from = DAY_TYPE, values_from = Totals)   %>%
+        filter( `ROUTE NAME` %in% selectedRoutes()) %>%
+        group_by( Month, Year, Month_year, `DAY TYPE`) %>%
+        summarize( Totals = sum(as.integer(`SUM RIDERSHIP AVERAGE`))) %>%
+        pivot_wider(id_cols = c(Month, Year, Month_year), names_from = `DAY TYPE`, values_from = Totals)   %>%
         inner_join( day_count, by = "Month_year" ) %>%
         mutate( Blended.ridership = Saturday * DAYCOUNT / Saturdays * wts$Sat + 
                                     Sunday   * DAYCOUNT / Sundays   * wts$Sun + 
@@ -132,7 +133,7 @@ shinyApp(
                 Moving_average  = rollsumr( Ridership, 12, fill = NA),
                 Tooltip         = paste("Ridership:", scales::comma(Ridership)),
                 Change.tooltip  = paste(month( Month, label = TRUE), Year, "Change:", scales::percent( Year_over_year)),
-                Rolling.tooltip = paste(month( Month, label = TRUE), Year, "Trailing average:", scales::comma( Moving_average)),
+                Rolling.tooltip = paste(month( Month, label = TRUE), Year, "Trailing:", scales::comma( Moving_average)),
                 "Cap Remap"     = case_when(
                   Month_year < "2018-06-01" ~ "Before",
                   Month_year >= "2018-06-01" ~ "After"),
@@ -152,7 +153,7 @@ shinyApp(
           ggtitle("Cap Metro Ridership (selected routes)")
         girafe(ggobj = plot, width_svg = 10, height_svg = 8)
     })
-    
+
     output$changePlot = renderGirafe({
         separated <- aggregated() %>%
           filter(! is.na( Year_over_year ))
