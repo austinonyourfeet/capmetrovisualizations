@@ -48,6 +48,58 @@ day_count <- ridership %>%
           Saturdays = weekday_count( Month_year, 6),
           Sundays   = weekday_count( Month_year, 0))
 
+disaggregatedRidership <- function(wts, routes, normalize = TRUE ) {
+  ridership %>%
+    filter( `ROUTE NAME` %in% routes) %>%
+    mutate( Ridership = as.integer(`SUM RIDERSHIP AVERAGE`)) %>%
+    pivot_wider(id_cols = c(Month, Year, Month_year, Route.number, `ROUTE NAME`), names_from = c( `DAY TYPE`), values_from = Ridership) %>%
+    inner_join( day_count, by = "Month_year" ) %>%
+    mutate( Blended.ridership = Saturday * DAYCOUNT / Saturdays * wts$Sat + 
+              Sunday   * DAYCOUNT / Sundays   * wts$Sun + 
+              5 * Weekday  * DAYCOUNT / Weekdays  * wts$Wd,
+            Actual.ridership  = Saturday * wts$Sat + Sunday * wts$Sun + Weekday * wts$Wd,
+            Normalize = isTRUE(normalize),
+            Ridership = if_else(Normalize, as.integer(round(Blended.ridership)), Actual.ridership)) %>%
+    select( Month, Year, Month_year, Route.number, Ridership ) %>%
+    arrange( Year, Month ) %>%
+    group_by( Route.number ) %>%
+    mutate( Moving_average  = rollsumr( Ridership, 12, fill = NA)) %>%
+    filter( Month_year >= "2019-06-01") %>%
+    mutate( Growth          = ( Moving_average / first(Moving_average) ) - 1)  %>%
+    ungroup() %>%
+    mutate( Route.number = as.factor(Route.number),
+            Tooltip      = paste(Route.number, ":", scales::percent(Growth)))
+}
+
+aggregateRoutes <- function( wts, routes, normalize = TRUE ) {
+  ridership %>%
+    filter( `ROUTE NAME` %in% routes) %>%
+    group_by( Month, Year, Month_year, `DAY TYPE`) %>%
+    summarize( Totals = sum(as.integer(`SUM RIDERSHIP AVERAGE`))) %>%
+    pivot_wider(id_cols = c(Month, Year, Month_year), names_from = `DAY TYPE`, values_from = Totals)   %>%
+    inner_join( day_count, by = "Month_year" ) %>%
+    mutate( Blended.ridership = Saturday * DAYCOUNT / Saturdays * wts$Sat + 
+              Sunday   * DAYCOUNT / Sundays   * wts$Sun + 
+              5 * Weekday  * DAYCOUNT / Weekdays  * wts$Wd,
+            Actual.ridership  = Saturday * wts$Sat + Sunday * wts$Sun + Weekday * wts$Wd,
+            Normalize = isTRUE(normalize), 
+            Ridership = if_else(Normalize, as.integer(round(Blended.ridership)), Actual.ridership)) %>%
+    ungroup() %>% 
+    group_by( Month ) %>%
+    arrange( Year) %>%
+    mutate( Year_over_year   = Ridership / lag( Ridership) - 1) %>%
+    ungroup() %>%
+    arrange( Year, Month ) %>%
+    mutate( Year            = as.factor(Year),
+            Moving_average  = rollsumr( Ridership, 12, fill = NA),
+            Tooltip         = paste("Ridership:", scales::comma(Ridership)),
+            Change.tooltip  = paste(month( Month, label = TRUE), Year, "Change:", scales::percent( Year_over_year)),
+            Rolling.tooltip = paste(month( Month, label = TRUE), Year, "Trailing:", scales::comma( Moving_average)),
+            "Cap Remap"     = case_when(
+              Month_year < "2018-06-01" ~ "Before",
+              Month_year >= "2018-06-01" ~ "After"),
+            "Cap Remap"     = factor( `Cap Remap`, levels = c("Before", "After")))
+}
 
 shinyApp(
   ui = function(request) {
@@ -80,7 +132,8 @@ shinyApp(
         tabsetPanel(
           tabPanel( "Ridership",           girafeOutput("plot",        width="100%", height = "750px"), bookmarkButton()),
           tabPanel( "Change in ridership", girafeOutput("changePlot",  width="100%", height = "750px")),
-          tabPanel( "12-month average",    girafeOutput("rollingPlot", width="100%", height = "750px"))
+          tabPanel( "12-month average",    girafeOutput("rollingPlot", width="100%", height = "750px")),
+          tabPanel( "Route Growth",        girafeOutput("growthPlot",  width="100%", height = "750px"))
         )
       )
     ))
@@ -109,37 +162,9 @@ shinyApp(
       )
     })
         
-    aggregated <- reactive({
-      wts <- weekday_weights()
-      ridership %>%
-        filter( `ROUTE NAME` %in% selectedRoutes()) %>%
-        group_by( Month, Year, Month_year, `DAY TYPE`) %>%
-        summarize( Totals = sum(as.integer(`SUM RIDERSHIP AVERAGE`))) %>%
-        pivot_wider(id_cols = c(Month, Year, Month_year), names_from = `DAY TYPE`, values_from = Totals)   %>%
-        inner_join( day_count, by = "Month_year" ) %>%
-        mutate( Blended.ridership = Saturday * DAYCOUNT / Saturdays * wts$Sat + 
-                                    Sunday   * DAYCOUNT / Sundays   * wts$Sun + 
-                                5 * Weekday  * DAYCOUNT / Weekdays  * wts$Wd,
-                Actual.ridership  = Saturday * wts$Sat + Sunday * wts$Sun + Weekday * wts$Wd,
-                Normalize = isTRUE(input$normalize), 
-                Ridership = if_else(Normalize, as.integer(round(Blended.ridership)), Actual.ridership)) %>%
-        ungroup() %>% 
-        group_by( Month ) %>%
-        arrange( Year) %>%
-        mutate( Year_over_year   = Ridership / lag( Ridership) - 1) %>%
-        ungroup() %>%
-        arrange( Year, Month ) %>%
-        mutate( Year            = as.factor(Year),
-                Moving_average  = rollsumr( Ridership, 12, fill = NA),
-                Tooltip         = paste("Ridership:", scales::comma(Ridership)),
-                Change.tooltip  = paste(month( Month, label = TRUE), Year, "Change:", scales::percent( Year_over_year)),
-                Rolling.tooltip = paste(month( Month, label = TRUE), Year, "Trailing:", scales::comma( Moving_average)),
-                "Cap Remap"     = case_when(
-                  Month_year < "2018-06-01" ~ "Before",
-                  Month_year >= "2018-06-01" ~ "After"),
-                "Cap Remap"     = factor( `Cap Remap`, levels = c("Before", "After")))
-    })
-
+    aggregated    <- reactive({ aggregateRoutes(weekday_weights(), selectedRoutes(), input$normalize) })
+    disaggregated <- reactive({ disaggregatedRidership(weekday_weights(), selectedRoutes(), input$normalize) })
+    
     output$plot = renderGirafe({
         plot <- ggplot(aggregated(), aes( x = Month, y = Ridership, group = Year, color = Year)) +
           geom_line() +
@@ -184,5 +209,18 @@ shinyApp(
         ggtitle("Trailing 12-month Ridership (selected routes)")
       girafe(ggobj = plot, width_svg = 10, height_svg = 8)
     })
+    
+    output$growthPlot = renderGirafe({
+      plot <- ggplot(disaggregated(), aes( x = Month_year, y = Growth, group = Route.number, color = Route.number) ) +
+        geom_line() +
+        geom_point_interactive(aes(tooltip = Tooltip), size = 1) +
+        scale_y_continuous(labels = scales::percent) + 
+        theme_fivethirtyeight() +
+        theme(panel.grid.major.x = element_blank()) +
+        labs( caption = "Powered by Austin on Your Feet, with data from CapMetro. http://austinonyourfeet.com") +
+        ggtitle("Cap Metro Ridership (selected routes)")
+      girafe(ggobj = plot, width_svg = 10, height_svg = 8)
+    })
+    
   }, enableBookmarking = "url"
 )
