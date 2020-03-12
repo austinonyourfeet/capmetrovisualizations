@@ -10,7 +10,9 @@ library( ggthemes )
 library( ggiraph )
 library( chron)
 library( zoo )
+library( readr )
 library( gtools )
+library( stringr )
 
 CAPMETRO_APP_URL       <- "https://app.capmetro.org/ADAReports/Report/RidershipReports"
 CAPMETRO_RIDERSHIP_URL <- "https://app.capmetro.org/ADAReports/Report/ExportRidershipReport"
@@ -22,7 +24,8 @@ GET( CAPMETRO_APP_URL )
 ridership <- GET( CAPMETRO_RIDERSHIP_URL) %>% 
   content() %>%
   separate(`ROUTE NAME`, sep = "-", c("Route.number", NA), remove = FALSE, extra = "merge") %>%
-  mutate( Month_year = mdy(`MONTH YEAR`),
+  mutate( `MONTH YEAR` = str_replace(`MONTH YEAR`, "-(\\d{2})$", "-20\\1"),
+          Month_year = mdy(`MONTH YEAR`),
           Month      = month( Month_year ),
           Year       = year( Month_year),
           Route.number = as.integer( Route.number ),
